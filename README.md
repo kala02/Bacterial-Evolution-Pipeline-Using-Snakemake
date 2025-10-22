@@ -51,13 +51,22 @@ conda activate bacterial_evolution
 Edit `config.json`:
 ```json
 {
-  \"samples\": [
+  "samples": [
     {
-      \"name\": \"Sample1\",
-      \"ancestor_sra\": \"ERR13909728\",
-      \"evolved_sra\": \"ERR13909733\"
+      "name": "Sample1",
+      "ancestor_sra": "ERR13909728",
+      "evolved_sra": "ERR13909733"
     }
-  ]
+  ],
+  "reference": {
+    "url": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/005/845/GCF_000005845.2_ASM584v2/GCF_000005845.2_ASM584v2_genomic.fna.gz",
+    "name": "K12_reference.fna"
+  },
+  "threads": {
+    "bwa": 4,
+    "bcftools": 2,
+    "prokka": 4
+  }
 }
 ```
 
