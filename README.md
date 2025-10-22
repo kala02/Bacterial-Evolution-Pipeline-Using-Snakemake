@@ -41,12 +41,12 @@ cd Bacterial-Evolution-Pipeline
 ```
 
 ### 2. Install Dependencies
-```bash
-# Using Conda (recommended)
-conda env create -f environment.yaml
-conda activate bacterial_evolution
-```
+## 🧰 Conda Environments
 
+This pipeline uses separate conda environments for each step, defined in the `envs/` folder.
+Each rule in the `Snakefile` automatically activates the corresponding environment.  
+
+ 
 ### 3. Configure Your Samples
 Edit `config.json`:
 ```json
