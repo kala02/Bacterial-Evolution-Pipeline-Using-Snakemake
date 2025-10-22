@@ -73,13 +73,13 @@ Edit `config.json`:
 ### 4. Run the Pipeline
 ```bash
 # Dry run (see what will execute)
-./run_pipeline.sh -n
+snakemake -n --use-conda     
 
-# Run with 8 cores
-./run_pipeline.sh -c 8
+# Snakemake execution
+snakemake --cores 4 --use-conda
 
-# Or use Snakemake directly
-snakemake --cores 8
+#If on MAC M1/M2/M3 
+CONDA_SUBDIR=osx-64 snakemake --cores 4 --use-conda
 ```
 
 ### 5. Analyze Results
@@ -94,10 +94,9 @@ snakemake --cores 8
 ## 📁 Repository Structure
 
 ```
-bacterial-evolution-pipeline/
+Bacterial-Evolution-Pipeline/
 ├── Snakefile                  # Main pipeline (26 rules, 575 lines)
 ├── config.json                # Sample configuration         
-│
 ├── envs/                      # Conda dependencies
 │   ├── bcftools.yaml          
 │   ├── bwa.yaml            
