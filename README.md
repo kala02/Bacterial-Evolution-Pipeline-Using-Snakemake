@@ -37,7 +37,7 @@ Functional Annotation → HTML Reports
 ### 1. Clone the Repository
 ```bash
 git clone https://github.com/kala02/Bacterial-Evolution-Pipeline-Using-Snakemake.git
-cd bacterial-evolution-pipeline
+cd Bacterial-Evolution-Pipeline
 ```
 
 ### 2. Install Dependencies
