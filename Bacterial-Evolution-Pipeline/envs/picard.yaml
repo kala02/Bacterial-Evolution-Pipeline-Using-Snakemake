@@ -1,0 +1,8 @@
+channels:
+
+bioconda
+
+conda-forge
+dependencies:
+
+picard=3.0.0

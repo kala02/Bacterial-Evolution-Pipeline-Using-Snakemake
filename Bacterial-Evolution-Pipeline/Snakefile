@@ -1,0 +1,582 @@
+# ========================================
+# Bacterial Evolution Snakemake Pipeline
+# ========================================
+
+# Load configuration file
+configfile: "config.json"
+
+# Extract sample and reference information
+SAMPLES = config["samples"]
+SAMPLE_NAMES = [s["name"] for s in SAMPLES]
+# Corrected REF to remove the .fna extension, preventing duplication in file paths
+REF = config["reference"]["name"].replace(".fna", "")
+
+# ========================================
+# RULE: all (Target Rule)
+# ========================================
+# This is the FIRST rule Snakemake sees - it defines what we want as final output
+# Snakemake works backwards from here to figure out what needs to be run
+
+rule all:
+    input:
+        # Final outputs: annotated VCF files for each sample
+        expand("4_annotation/{sample}_Evolved_annotated.vcf", sample=SAMPLE_NAMES)
+
+# ========================================
+# RULE: download_sra
+# ========================================
+# Downloads SRA files from NCBI using prefetch
+# This creates .sra files in the default SRA cache directory
+
+rule download_sra_ancestor:
+    output:
+        # Prefetch stores files in a specific location, but we mark completion with a flag file
+        touch("2_data/{sample}_ancestor_downloaded.flag")
+    params:
+        # Extract the SRA accession for this specific sample's ancestor
+        sra_id=lambda wildcards: [s["ancestor_sra"] for s in SAMPLES if s["name"] == wildcards.sample][0]
+    shell:
+        "prefetch {params.sra_id}"
+
+rule download_sra_evolved:
+    output:
+        touch("2_data/{sample}_evolved_downloaded.flag")
+    params:
+        sra_id=lambda wildcards: [s["evolved_sra"] for s in SAMPLES if s["name"] == wildcards.sample][0]
+    shell:
+        "prefetch {params.sra_id}"
+
+
+# ========================================
+# RULE: sra_to_fastq
+# ========================================
+# Converts .sra files to FASTQ format (paired-end reads split into R1 and R2)
+
+rule sra_to_fastq_ancestor:
+    input:
+        "2_data/{sample}_ancestor_downloaded.flag"
+    output:
+        r1="2_data/{sample}_Ancestor_R1.fastq",
+        r2="2_data/{sample}_Ancestor_R2.fastq"
+    params:
+        sra_id=lambda wildcards: [s["ancestor_sra"] for s in SAMPLES if s["name"] == wildcards.sample][0],
+        outdir="2_data"
+    shell:
+        """
+        fasterq-dump --split-files {params.sra_id} -O {params.outdir}/
+        mv {params.outdir}/{params.sra_id}_1.fastq {output.r1}
+        mv {params.outdir}/{params.sra_id}_2.fastq {output.r2}
+        """
+
+rule sra_to_fastq_evolved:
+    input:
+        "2_data/{sample}_evolved_downloaded.flag"
+    output:
+        r1="2_data/{sample}_Evolved_R1.fastq",
+        r2="2_data/{sample}_Evolved_R2.fastq"
+    params:
+        sra_id=lambda wildcards: [s["evolved_sra"] for s in SAMPLES if s["name"] == wildcards.sample][0],
+        outdir="2_data"
+    shell:
+        """
+        fasterq-dump --split-files {params.sra_id} -O {params.outdir}/
+        mv {params.outdir}/{params.sra_id}_1.fastq {output.r1}
+        mv {params.outdir}/{params.sra_id}_2.fastq {output.r2}
+        """
+
+
+# ========================================
+# RULE: fastqc
+# ========================================
+# Runs FastQC quality control on raw FASTQ files
+# Generates HTML reports showing quality metrics for each file
+
+rule fastqc:
+    input:
+        # Wait for all FASTQ files to be created for this sample
+        ancestor_r1="2_data/{sample}_Ancestor_R1.fastq",
+        ancestor_r2="2_data/{sample}_Ancestor_R2.fastq",
+        evolved_r1="2_data/{sample}_Evolved_R1.fastq",
+        evolved_r2="2_data/{sample}_Evolved_R2.fastq"
+    output:
+        # FastQC creates HTML and zip files for each input
+        "3_results/{sample}_Ancestor_R1_fastqc.html",
+        "3_results/{sample}_Ancestor_R2_fastqc.html",
+        "3_results/{sample}_Evolved_R1_fastqc.html",
+        "3_results/{sample}_Evolved_R2_fastqc.html"
+    params:
+        outdir="3_results"
+    shell:
+        """
+        fastqc {input.ancestor_r1} {input.ancestor_r2} \
+               {input.evolved_r1} {input.evolved_r2} \
+               -o {params.outdir}
+        """
+
+
+# ========================================
+# RULE: fastp_trim
+# ========================================
+# Trims low-quality bases and adapters from reads
+# Also performs quality filtering to remove poor reads
+
+rule fastp_trim_ancestor:
+    input:
+        r1="2_data/{sample}_Ancestor_R1.fastq",
+        r2="2_data/{sample}_Ancestor_R2.fastq"
+    output:
+        r1="2_data/{sample}_Ancestor_R1.trimmed.fastq",
+        r2="2_data/{sample}_Ancestor_R2.trimmed.fastq",
+        html="3_results/{sample}_Ancestor_fastp.html",
+        json="3_results/{sample}_Ancestor_fastp.json"
+    shell:
+        """
+        fastp \
+          --in1 {input.r1} --in2 {input.r2} \
+          --out1 {output.r1} --out2 {output.r2} \
+          --html {output.html} --json {output.json}
+        """
+
+rule fastp_trim_evolved:
+    input:
+        r1="2_data/{sample}_Evolved_R1.fastq",
+        r2="2_data/{sample}_Evolved_R2.fastq"
+    output:
+        r1="2_data/{sample}_Evolved_R1.trimmed.fastq",
+        r2="2_data/{sample}_Evolved_R2.trimmed.fastq",
+        html="3_results/{sample}_Evolved_fastp.html",
+        json="3_results/{sample}_Evolved_fastp.json"
+    shell:
+        """
+        fastp \
+          --in1 {input.r1} --in2 {input.r2} \
+          --out1 {output.r1} --out2 {output.r2} \
+          --html {output.html} --json {output.json}
+        """
+
+
+# ========================================
+# RULE: download_reference
+# ========================================
+# Downloads reference genome from NCBI FTP
+# This rule runs only ONCE per pipeline (not per sample)
+
+rule download_reference:
+    output:
+        f"1_reference/{REF}.fna.gz"
+    params:
+        url=config["reference"]["url"]
+    shell:
+        """
+        mkdir -p 1_reference
+        wget -O {output} {params.url}
+        """
+
+
+# ========================================
+# RULE: decompress_reference
+# ========================================
+# Unzips the reference genome
+
+rule decompress_reference:
+    input:
+        f"1_reference/{REF}.fna.gz"
+    output:
+        f"1_reference/{REF}.fna"
+    shell:
+        """
+        gunzip -c {input} > {output}
+        """
+
+
+# ========================================
+# RULE: index_reference_bwa
+# ========================================
+# Creates BWA index files for alignment
+# BWA needs these index files to efficiently map reads to the reference
+
+rule index_reference_bwa:
+    input:
+        f"1_reference/{REF}.fna"
+    output:
+        f"1_reference/{REF}.fna.amb",
+        f"1_reference/{REF}.fna.ann",
+        f"1_reference/{REF}.fna.bwt",
+        f"1_reference/{REF}.fna.pac",
+        f"1_reference/{REF}.fna.sa"
+    shell:
+        "bwa index {input}"
+
+
+# ========================================
+# RULE: index_reference_samtools
+# ========================================
+# Creates samtools faidx index (needed for variant calling with bcftools)
+
+rule index_reference_samtools:
+    input:
+        f"1_reference/{REF}.fna"
+    output:
+        f"1_reference/{REF}.fna.fai"
+    shell:
+        "samtools faidx {input}"
+
+
+
+# ========================================
+# RULE: bwa_mem_align
+# ========================================
+# Aligns trimmed reads to the reference genome using BWA MEM algorithm
+# BWA MEM is best for reads 70bp-1Mbp (covers most Illumina sequencing)
+
+rule bwa_mem_ancestor:
+    input:
+        ref=f"1_reference/{REF}.fna",
+        r1="2_data/{sample}_Ancestor_R1.trimmed.fastq",
+        r2="2_data/{sample}_Ancestor_R2.trimmed.fastq",
+        # Also require index files to exist to ensure correct order of execution
+        idx=expand(f"1_reference/{REF}.fna.{{ext}}", ext=["amb", "ann", "bwt", "pac", "sa"])
+    output:
+        "3_results/{sample}_Ancestor.sam"
+    threads: config["threads"]["bwa"]
+    shell:
+        """
+        bwa mem -t {threads} {input.ref} {input.r1} {input.r2} > {output}
+        """
+
+rule bwa_mem_evolved:
+    input:
+        ref=f"1_reference/{REF}.fna",
+        r1="2_data/{sample}_Evolved_R1.trimmed.fastq",
+        r2="2_data/{sample}_Evolved_R2.trimmed.fastq",
+        idx=expand(f"1_reference/{REF}.fna.{{ext}}", ext=["amb", "ann", "bwt", "pac", "sa"])
+    output:
+        "3_results/{sample}_Evolved.sam"
+    threads: config["threads"]["bwa"]
+    shell:
+        """
+        bwa mem -t {threads} {input.ref} {input.r1} {input.r2} > {output}
+        """
+
+# ========================================
+# RULE: sam_to_sorted_bam
+# ========================================
+# Converts SAM (text) to BAM (binary) and sorts by genomic coordinates
+# Sorting is REQUIRED for downstream tools (variant calling, duplicate marking)
+
+rule sam_to_sorted_bam_ancestor:
+    input:
+        "3_results/{sample}_Ancestor.sam"
+    output:
+        "3_results/{sample}_Ancestor.sorted.bam"
+    shell:
+        """
+        samtools view -Sb {input} | samtools sort -o {output}
+        """
+
+rule sam_to_sorted_bam_evolved:
+    input:
+        "3_results/{sample}_Evolved.sam"
+    output:
+        "3_results/{sample}_Evolved.sorted.bam"
+    shell:
+        """
+        samtools view -Sb {input} | samtools sort -o {output}
+        """
+
+
+# ========================================
+# RULE: index_bam
+# ========================================
+# Creates BAM index (.bai file) for fast random access
+# Required by variant callers and visualization tools (IGV)
+
+rule index_bam_ancestor:
+    input:
+        "3_results/{sample}_Ancestor.sorted.bam"
+    output:
+        "3_results/{sample}_Ancestor.sorted.bam.bai"
+    shell:
+        "samtools index {input}"
+
+rule index_bam_evolved:
+    input:
+        "3_results/{sample}_Evolved.sorted.bam"
+    output:
+        "3_results/{sample}_Evolved.sorted.bam.bai"
+    shell:
+        "samtools index {input}"
+
+
+# ========================================
+# RULE: mark_duplicates
+# ========================================
+# Identifies and removes PCR duplicates (reads with identical start/end positions)
+# PCR duplicates are artifacts from library prep, not biological variation
+
+rule mark_duplicates_ancestor:
+    input:
+        bam="3_results/{sample}_Ancestor.sorted.bam",
+        bai="3_results/{sample}_Ancestor.sorted.bam.bai"
+    output:
+        bam="3_results/{sample}_Ancestor.dedup.bam",
+        metrics="3_results/{sample}_Ancestor_metrics.txt"
+    shell:
+        """
+        picard MarkDuplicates \
+          I={input.bam} \
+          O={output.bam} \
+          M={output.metrics} \
+          REMOVE_DUPLICATES=true
+        """
+
+rule mark_duplicates_evolved:
+    input:
+        bam="3_results/{sample}_Evolved.sorted.bam",
+        bai="3_results/{sample}_Evolved.sorted.bam.bai"
+    output:
+        bam="3_results/{sample}_Evolved.dedup.bam",
+        metrics="3_results/{sample}_Evolved_metrics.txt"
+    shell:
+        """
+        picard MarkDuplicates \
+          I={input.bam} \
+          O={output.bam} \
+          M={output.metrics} \
+          REMOVE_DUPLICATES=true
+        """
+
+
+# ========================================
+# RULE: index_dedup_bam
+# ========================================
+# Index the deduplicated BAM files for variant calling
+
+rule index_dedup_bam_ancestor:
+    input:
+        "3_results/{sample}_Ancestor.dedup.bam"
+    output:
+        "3_results/{sample}_Ancestor.dedup.bam.bai"
+    shell:
+        "samtools index {input}"
+
+rule index_dedup_bam_evolved:
+    input:
+        "3_results/{sample}_Evolved.dedup.bam"
+    output:
+        "3_results/{sample}_Evolved.dedup.bam.bai"
+    shell:
+        "samtools index {input}"
+
+
+# ========================================
+# RULE: variant_calling
+# ========================================
+# Calls variants (SNPs and INDELs) using bcftools
+# Two-step process: mpileup (generates genotype likelihoods) -> call (calls variants)
+
+rule call_variants_ancestor:
+    input:
+        bam="3_results/{sample}_Ancestor.dedup.bam",
+        bai="3_results/{sample}_Ancestor.dedup.bam.bai",
+        ref=f"1_reference/{REF}.fna",
+        ref_idx=f"1_reference/{REF}.fna.fai"
+    output:
+        "3_results/{sample}_Ancestor.vcf.gz"
+    threads: config["threads"]["bcftools"]
+    shell:
+        """
+        bcftools mpileup -f {input.ref} {input.bam} | \
+        bcftools call -mv -Oz -o {output}
+        """
+
+rule call_variants_evolved:
+    input:
+        bam="3_results/{sample}_Evolved.dedup.bam",
+        bai="3_results/{sample}_Evolved.dedup.bam.bai",
+        ref=f"1_reference/{REF}.fna",
+        ref_idx=f"1_reference/{REF}.fna.fai"
+    output:
+        "3_results/{sample}_Evolved.vcf.gz"
+    threads: config["threads"]["bcftools"]
+    shell:
+        """
+        bcftools mpileup -f {input.ref} {input.bam} | \
+        bcftools call -mv -Oz -o {output}
+        """
+
+
+# ========================================
+# RULE: index_vcf
+# ========================================
+# Creates tabix index for VCF files (needed for bcftools isec comparison)
+
+rule index_vcf_ancestor:
+    input:
+        "3_results/{sample}_Ancestor.vcf.gz"
+    output:
+        "3_results/{sample}_Ancestor.vcf.gz.tbi"
+    shell:
+        "tabix {input}"
+
+rule index_vcf_evolved:
+    input:
+        "3_results/{sample}_Evolved.vcf.gz"
+    output:
+        "3_results/{sample}_Evolved.vcf.gz.tbi"
+    shell:
+        "tabix {input}"
+
+
+# ========================================
+# RULE: compare_variants
+# ========================================
+# Finds variants present in EVOLVED but NOT in ANCESTOR
+# These are the mutations that occurred during experimental evolution!
+
+rule compare_variants:
+    input:
+        evolved_vcf="3_results/{sample}_Evolved.vcf.gz",
+        evolved_tbi="3_results/{sample}_Evolved.vcf.gz.tbi",
+        ancestor_vcf="3_results/{sample}_Ancestor.vcf.gz",
+        ancestor_tbi="3_results/{sample}_Ancestor.vcf.gz.tbi"
+    output:
+        # bcftools isec creates a directory with multiple files
+        # 0000.vcf contains variants unique to the first file (evolved)
+        evolved_only="3_results/{sample}_comparison/0000.vcf"
+    params:
+        outdir="3_results/{sample}_comparison"
+    shell:
+        """
+        bcftools isec -p {params.outdir} -n=1 -w1 {input.evolved_vcf} {input.ancestor_vcf}
+        """
+
+
+# ========================================
+# RULE: download_snpeff_database
+# ========================================
+# Downloads the SnpEff annotation database for E. coli K12
+# This only needs to run once, before any annotation
+
+# rule download_snpeff_db:
+#     output:
+#         touch("1_reference/snpeff_db_downloaded.flag")
+#     params:
+#         db=config["reference"]["snpeff_db"]
+#     shell:
+#         "snpEff download {params.db}"
+
+# RULE: annotate_reference_prokka
+# ========================================
+# Annotates reference genome using Prokka to get gene predictions
+# This creates GFF, protein, and CDS files needed for custom SnpEff database
+
+rule annotate_reference_prokka:
+    input:
+        ref="1_reference/K12_reference.fna"
+    output:
+        gff="4_annotation/prokka_ref/K12_reference.gff",
+        faa="4_annotation/prokka_ref/K12_reference.faa",
+        ffn="4_annotation/prokka_ref/K12_reference.ffn"
+    params:
+        outdir="4_annotation/prokka_ref",
+        prefix="K12_reference"
+    threads: 4
+    conda:  
+        "envs/prokka.yaml"
+    run:
+        # Import the 'shell' command function from Snakemake's helpers
+        from snakemake.shell import shell
+        import os
+
+        # Get the path to the conda environment's bin directory
+        # The 'conda_env' variable is automatically provided by Snakemake here.
+        conda_bin_dir = os.path.join(str(conda_env), "bin")
+
+        # Build the full, explicit command string
+        command = f"""
+            unset PERL5LIB && \
+            {conda_bin_dir}/perl {conda_bin_dir}/prokka \
+                --outdir {params.outdir} \
+                --prefix {params.prefix} \
+                --cpus {threads} \
+                --force \
+                {input.ref}
+        """
+        
+        # Execute the command
+        shell(command)
+
+# ========================================
+# RULE: build_custom_snpeff_db
+# Builds custom SnpEff database from Prokka annotations
+# This allows annotation with YOUR specific reference, not just pre-built genomes
+
+rule build_custom_snpeff_db:
+    input:
+        ref="1_reference/K12_reference.fna",
+        gff="4_annotation/prokka_ref/K12_reference.gff",
+        faa="4_annotation/prokka_ref/K12_reference.faa",
+        ffn="4_annotation/prokka_ref/K12_reference.ffn"
+    output:
+        config_file="snpeff_config/my_snpeff.config",
+        db_flag=touch("snpeff_db/K12_reference/snpEff.bin")
+    params:
+        db_name="K12_reference",
+        db_dir="snpeff_db"
+    shell:
+        """
+        # Create SnpEff config file
+        mkdir -p snpeff_config
+        echo "{params.db_name}.genome : Escherichia coli K12" > {output.config_file}
+        
+        # Create database directory structure
+        mkdir -p {params.db_dir}/{params.db_name}
+        
+        # Copy annotation files to SnpEff database directory
+        cp {input.gff} {params.db_dir}/{params.db_name}/genes.gff
+        cp {input.ref} {params.db_dir}/{params.db_name}/sequences.fa
+        cp {input.faa} {params.db_dir}/{params.db_name}/protein.fa
+        cp {input.ffn} {params.db_dir}/{params.db_name}/cds.fa
+        
+        # Build SnpEff database
+        snpEff build -c {output.config_file} \
+                     -gff3 -v {params.db_name} \
+                     -dataDir $PWD/{params.db_dir} \
+                     -noCheckCds -noCheckProtein
+        """
+
+
+
+# ========================================
+# RULE: annotate_variants
+# ========================================
+# Annotates evolved-specific mutations with functional impact using custom database
+# Tells us: gene names, amino acid changes, impact severity, etc.
+
+rule annotate_variants:
+    input:
+        vcf="3_results/{sample}_comparison/0000.vcf",
+        config_file="snpeff_config/my_snpeff.config",
+        db_flag="snpeff_db/K12_reference/snpEff.bin"
+    output:
+        vcf="4_annotation/{sample}_Evolved_annotated.vcf",
+        stats="4_annotation/{sample}_Evolved_snpEff_summary.html"
+    params:
+        db_name="K12_reference",
+        db_dir="snpeff_db"
+    shell:
+        """
+        mkdir -p 4_annotation
+        snpEff -c {input.config_file} \
+               -v {params.db_name} \
+               -dataDir $PWD/{params.db_dir} \
+               -stats {output.stats} \
+               {input.vcf} > {output.vcf}
+        """
+
+
+
+
+
+

@@ -1,0 +1,10 @@
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  # Pinning to a known-stable combination that solves Perl path issues
+  # - perl=5.26.2
+  # - perl-bioperl=1.7.2
+  - prokka=1.14.6
+
