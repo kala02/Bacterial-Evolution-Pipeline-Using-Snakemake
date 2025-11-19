@@ -2,7 +2,7 @@
 Automated workflow for analysing bacterial evolution using Snakemake. Integrates bioinformatics tools for sequence download, alignment, variant calling and genome annotation. This pipeline is developed to compare ancestral and evolved bacterial strains to identify genetic variations responsible for adaptation.
 
 
-A comprehensive, production-ready **Snakemake pipeline** for identifying and annotating mutations in evolved bacterial strains compared to ancestral strains. Perfect for **experimental evolution studies**.
+A production-ready **Snakemake pipeline** for identifying and annotating mutations in evolved bacterial strains compared to ancestral strains. Perfect for **experimental evolution studies**.
 
 ## ✨ Key Features
 
